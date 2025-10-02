@@ -6,22 +6,28 @@ import (
 	"os"
 )
 
-type YandexConfig struct {
-	BotToken string
-	ApiKey   string
-	FolderId string
+type Config struct {
+	BotToken     string
+	ApiKey       string
+	FolderId     string
+	GeonamesUser string
+	DbPath       string
+	RulePath     string
 }
 
-func Load() (c YandexConfig, err error) {
+func Load() (c Config, err error) {
 	err = godotenv.Load()
 	if err != nil {
-		return YandexConfig{}, err
+		return Config{}, err
 	}
 
-	c = YandexConfig{
-		BotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
-		ApiKey:   os.Getenv("YC_API_KEY"),
-		FolderId: os.Getenv("YC_FOLDER_ID"),
+	c = Config{
+		BotToken:     os.Getenv("TELEGRAM_BOT_TOKEN"),
+		ApiKey:       os.Getenv("YC_API_KEY"),
+		FolderId:     os.Getenv("YC_FOLDER_ID"),
+		GeonamesUser: os.Getenv("GEONAMES_USER"),
+		DbPath:       os.Getenv("DB_PATH"),
+		RulePath:     os.Getenv("RULE_PATH"),
 	}
 
 	if c.BotToken == "" {

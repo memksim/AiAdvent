@@ -1,6 +1,7 @@
 package yandex
 
 import (
+	"adventBot/internal/ai_model"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -13,19 +14,23 @@ import (
 const url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 const clientTimeout = 60 * time.Second
 const failureRequestReply = "Не удалось выполнить запрос. Повторите позже"
-const modelTemperature = 0.6
-const modelMaxTokens = 200
+const modelTemperature = 0.2
+const modelMaxTokens = 2000
 
 type AiModelYandex struct {
 	ApiKey   string
 	FolderID string
-	msg      message
+	system   message
 }
 
-func NewAiModelYandex(apiKey, folderId string) *AiModelYandex {
+func NewAiModelYandex(apiKey, rulePath string, folderId string) *AiModelYandex {
 	return &AiModelYandex{
 		ApiKey:   apiKey,
 		FolderID: folderId,
+		system: message{
+			Role: "system",
+			Text: ai_model.MustReadFile(rulePath),
+		},
 	}
 }
 
@@ -36,7 +41,8 @@ func (a *AiModelYandex) AskGpt(text string) string {
 	}
 
 	reqBody := a.prepareModelRequest(text)
-	b, _ := json.Marshal(reqBody)
+	b, _ := json.MarshalIndent(reqBody, "", "  ")
+	log.Printf("[AiModelYandex.AskGpt] REQUEST body:\n%s", string(b))
 
 	httpClient := &http.Client{Timeout: clientTimeout}
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(b))
@@ -44,24 +50,33 @@ func (a *AiModelYandex) AskGpt(text string) string {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Println("[AiModelYandex.AskGpt] Error while making request: ", err)
+		log.Println("[AiModelYandex.AskGpt] Error while making request:", err)
 		return failureRequestReply
 	}
 	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Println("[AiModelYandex.AskGpt] Body.Close(): ", err)
+		if cerr := Body.Close(); cerr != nil {
+			log.Println("[AiModelYandex.AskGpt] Body.Close():", cerr)
 		}
 	}(resp.Body)
 
+	log.Printf("[AiModelYandex.AskGpt] HTTP status: %d %s", resp.StatusCode, resp.Status)
+
+	// читаем тело целиком, чтобы и залогировать, и потом распарсить
+	rawResp, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Println("[AiModelYandex.AskGpt] Error reading body:", err)
+		return failureRequestReply
+	}
+	log.Printf("[AiModelYandex.AskGpt] RAW response:\n%s", string(rawResp))
+
 	if !isRequestSuccessful(resp.StatusCode) {
-		log.Println("[AiModelYandex.AskGpt] Request failed: ", resp.StatusCode)
+		log.Println("[AiModelYandex.AskGpt] Request failed:", resp.StatusCode)
 		return failureRequestReply
 	}
 
 	var r response
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		log.Println("[AiModelYandex.AskGpt] Error while decoding response: ", err)
+	if err := json.Unmarshal(rawResp, &r); err != nil {
+		log.Println("[AiModelYandex.AskGpt] Error while decoding response:", err)
 		return failureRequestReply
 	}
 
@@ -70,7 +85,10 @@ func (a *AiModelYandex) AskGpt(text string) string {
 		return failureRequestReply
 	}
 
-	return r.Result.Alternatives[0].Message.Text
+	result := r.Result.Alternatives[0].Message.Text
+	log.Printf("[AiModelYandex.AskGpt] PARSED answer: %s", result)
+
+	return result
 }
 
 func (a *AiModelYandex) checkAuthorizationInfo() bool {
@@ -80,7 +98,10 @@ func (a *AiModelYandex) checkAuthorizationInfo() bool {
 func (a *AiModelYandex) prepareModelRequest(text string) request {
 	r := request{
 		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-lite", a.FolderID),
-		Messages: []message{{Role: "user", Text: text}},
+		Messages: []message{
+			a.system,
+			{Role: "user", Text: text},
+		},
 	}
 	r.CompletionOptions.Stream = false
 	r.CompletionOptions.Temperature = modelTemperature
