@@ -1,7 +1,7 @@
 package bot
 
 import (
-	"adventBot/internal/db"
+	"adventBot/internal/db/chat"
 	"context"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -9,10 +9,10 @@ import (
 )
 
 type ResetHandler struct {
-	Repository db.Repository
+	Repository chat.Repository
 }
 
-func NewResetHandler(r db.Repository) *ResetHandler {
+func NewResetHandler(r chat.Repository) *ResetHandler {
 	return &ResetHandler{Repository: r}
 }
 

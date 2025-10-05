@@ -1,7 +1,7 @@
 package bot
 
 import (
-	"adventBot/internal/db"
+	"adventBot/internal/db/chat"
 	"context"
 	"fmt"
 	"github.com/go-telegram/bot"
@@ -10,10 +10,10 @@ import (
 )
 
 type CommandHandler struct {
-	Repository db.Repository
+	Repository chat.Repository
 }
 
-func NewCommandHandler(r db.Repository) *CommandHandler {
+func NewCommandHandler(r chat.Repository) *CommandHandler {
 	return &CommandHandler{Repository: r}
 }
 
