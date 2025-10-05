@@ -1,7 +1,7 @@
 package bot
 
 import (
-	"adventBot/internal/db"
+	"adventBot/internal/db/chat"
 	"adventBot/internal/timezone"
 	"context"
 	"fmt"
@@ -13,10 +13,10 @@ import (
 
 type LocationHandler struct {
 	TzAPI      timezone.ApiTimezone
-	Repository db.Repository
+	Repository chat.Repository
 }
 
-func NewLocationHandler(tz timezone.ApiTimezone, r db.Repository) *LocationHandler {
+func NewLocationHandler(tz timezone.ApiTimezone, r chat.Repository) *LocationHandler {
 	return &LocationHandler{TzAPI: tz, Repository: r}
 }
 

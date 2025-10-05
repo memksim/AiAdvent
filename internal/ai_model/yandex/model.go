@@ -2,28 +2,34 @@ package yandex
 
 import (
 	"adventBot/internal/ai_model"
+	dbmessage "adventBot/internal/db/message"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
 const url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 const clientTimeout = 60 * time.Second
 const failureRequestReply = "Не удалось выполнить запрос. Повторите позже"
-const modelTemperature = 0.2
-const modelMaxTokens = 2000
+const modelTemperature = 0.1
+const modelMaxTokens = 4000
+
+type messages []message
 
 type AiModelYandex struct {
-	ApiKey   string
-	FolderID string
-	system   message
+	ApiKey     string
+	FolderID   string
+	system     message
+	Repository dbmessage.Repository
 }
 
-func NewAiModelYandex(apiKey, rulePath string, folderId string) *AiModelYandex {
+func NewAiModelYandex(apiKey, rulePath string, folderId string, r dbmessage.Repository) *AiModelYandex {
 	return &AiModelYandex{
 		ApiKey:   apiKey,
 		FolderID: folderId,
@@ -31,21 +37,33 @@ func NewAiModelYandex(apiKey, rulePath string, folderId string) *AiModelYandex {
 			Role: "system",
 			Text: ai_model.MustReadFile(rulePath),
 		},
+		Repository: r,
 	}
 }
 
-func (a *AiModelYandex) AskGpt(text string) string {
+func (a *AiModelYandex) GetUserRole() ai_model.Role {
+	return &user
+}
+
+func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_model.InputForm) string {
+
+	log.Println("[AiModelYandex.AskGpt] input form: ", inputForm)
+
 	if !a.checkAuthorizationInfo() {
 		log.Println("[AiModelYandex.AskGpt] ApiKey or FolderID is empty")
 		return failureRequestReply
 	}
 
-	reqBody := a.prepareModelRequest(text)
-	b, _ := json.MarshalIndent(reqBody, "", "  ")
-	log.Printf("[AiModelYandex.AskGpt] REQUEST body:\n%s", string(b))
+	reqBody, err := a.prepareModelRequest(inputForm)
+	if err != nil {
+		log.Println("[AiModelYandex.prepareModelRequest] Failed to prepare model request", err)
+		return failureRequestReply
+	}
+
+	log.Printf("[AiModelYandex.AskGpt] REQUEST body:\n%s", string(reqBody))
 
 	httpClient := &http.Client{Timeout: clientTimeout}
-	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
 	a.prepareHttpRequest(req)
 
 	resp, err := httpClient.Do(req)
@@ -61,7 +79,6 @@ func (a *AiModelYandex) AskGpt(text string) string {
 
 	log.Printf("[AiModelYandex.AskGpt] HTTP status: %d %s", resp.StatusCode, resp.Status)
 
-	// читаем тело целиком, чтобы и залогировать, и потом распарсить
 	rawResp, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Println("[AiModelYandex.AskGpt] Error reading body:", err)
@@ -74,39 +91,97 @@ func (a *AiModelYandex) AskGpt(text string) string {
 		return failureRequestReply
 	}
 
-	var r response
-	if err := json.Unmarshal(rawResp, &r); err != nil {
-		log.Println("[AiModelYandex.AskGpt] Error while decoding response:", err)
+	var yr yaResponse
+	if err := json.Unmarshal(rawResp, &yr); err != nil {
+		log.Println("[AiModelYandex.AskGpt] decode yandex response:", err)
+		return failureRequestReply
+	}
+	if len(yr.Result.Alternatives) == 0 {
+		log.Println("[AiModelYandex.AskGpt] no alternatives in response")
+		return failureRequestReply
+	}
+	modelText := yr.Result.Alternatives[0].Message.Text
+	modelText = stripCodeFence(modelText)
+	if strings.TrimSpace(modelText) == "" {
+		log.Println("[AiModelYandex.AskGpt] empty text in alternative")
 		return failureRequestReply
 	}
 
-	if len(r.Result.Alternatives) == 0 {
-		log.Println("[AiModelYandex.AskGpt] No alternatives found")
+	var parsed response
+	if err := json.Unmarshal([]byte(modelText), &parsed); err != nil {
+		log.Printf("[AiModelYandex.AskGpt] cannot parse model JSON: %v; text=%s", err, modelText)
 		return failureRequestReply
 	}
 
-	result := r.Result.Alternatives[0].Message.Text
-	log.Printf("[AiModelYandex.AskGpt] PARSED answer: %s", result)
+	switch parsed.Mode {
+	case modeAsk:
+		last := inputForm.History[0]
+		log.Println("[AiModelYandex.AskGpt] last history:", last)
 
-	return result
+		if parsed.Question == "" {
+			log.Println("[AiModelYandex.AskGpt] ask without question")
+			return failureRequestReply
+		}
+		if dberr := a.Repository.Upsert(ctx, chatId, last.Role, last.Message, last.Timestamp); dberr != nil {
+			log.Println("[AiModelYandex.AskGpt] Repository.Upsert user error:", err)
+		}
+
+		currTime := int(time.Now().UnixMilli()) / 1000
+		if dberr := a.Repository.Upsert(ctx, chatId, model.GetValue(), parsed.Question, currTime); dberr != nil {
+			log.Println("[AiModelYandex.AskGpt] Repository.Upsert assistant error:", err)
+		}
+
+		return parsed.Question
+
+	case modeFinal:
+		if _, err := time.Parse(time.RFC3339, parsed.DateTime); err != nil {
+			log.Println("[AiModelYandex.AskGpt] invalid date time")
+			//TODO отправлять повторный запрос с нужной датой
+		}
+
+		_, err := a.Repository.DeleteById(ctx, chatId)
+		if err != nil {
+			log.Println("[AiModelYandex.AskGpt] failed to delete chat history:", err)
+		}
+
+		return fmt.Sprintf(
+			"Задача: %s\nДата/время: %s\nМесто: %s",
+			parsed.Task, parsed.DateTime, parsed.Location,
+		)
+
+	default:
+		log.Printf("[AiModelYandex.AskGpt] unknown mode: %s; raw=%s", parsed.Mode, modelText)
+		return failureRequestReply
+	}
 }
 
 func (a *AiModelYandex) checkAuthorizationInfo() bool {
 	return a.ApiKey != "" && a.FolderID != ""
 }
 
-func (a *AiModelYandex) prepareModelRequest(text string) request {
+func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm) ([]byte, error) {
+	dst := make(messages, 0, len(form.History))
+	dst = append(dst, a.system)
+	for _, m := range form.History {
+		dst = append(dst, mapToInternal(m))
+	}
+
 	r := request{
 		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-lite", a.FolderID),
-		Messages: []message{
-			a.system,
-			{Role: "user", Text: text},
-		},
+		Messages: dst.filterEmpty(),
 	}
+
 	r.CompletionOptions.Stream = false
 	r.CompletionOptions.Temperature = modelTemperature
 	r.CompletionOptions.MaxTokens = modelMaxTokens
-	return r
+
+	req, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		log.Println("[AiModelYandex.prepareModelRequest] Error while encoding request:", err)
+		return nil, err
+	}
+
+	return req, nil
 }
 
 func (a *AiModelYandex) prepareHttpRequest(req *http.Request) {
@@ -116,4 +191,48 @@ func (a *AiModelYandex) prepareHttpRequest(req *http.Request) {
 
 func isRequestSuccessful(status int) bool {
 	return status >= 200 && status < 300
+}
+
+func mapToInternal(src dbmessage.Message) message {
+	text := src.Message
+	if src.TimeZone != "" {
+		text += fmt.Sprintf(" (timeZone: %s)", src.TimeZone)
+	}
+	if src.Timestamp != 0 {
+		text += fmt.Sprintf(" [timestamp: %d]", src.Timestamp)
+	}
+
+	return message{
+		Role: src.Role,
+		Text: text,
+	}
+}
+
+func (m messages) filterEmpty() messages {
+	var out messages
+	for _, msg := range m {
+		if strings.TrimSpace(msg.Text) == "" {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func stripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		// срежем первую строку ``` или ```json
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = s[i+1:]
+		} else {
+			return ""
+		}
+	}
+	s = strings.TrimSpace(s)
+	// срежем закрывающие ```
+	if strings.HasSuffix(s, "```") {
+		s = strings.TrimSuffix(s, "```")
+	}
+	return strings.TrimSpace(s)
 }

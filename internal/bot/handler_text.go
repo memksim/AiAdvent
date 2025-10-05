@@ -2,23 +2,22 @@ package bot
 
 import (
 	"adventBot/internal/ai_model"
-	"adventBot/internal/ai_model/parser"
-	"adventBot/internal/db"
+	"adventBot/internal/db/chat"
+	"adventBot/internal/db/message"
 	"context"
-	"encoding/json"
-	"fmt"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"log"
 )
 
 type TextHandler struct {
-	Model      ai_model.AiModel
-	Repository db.Repository
+	Model          ai_model.AiModel
+	ChatRepository chat.Repository
+	MsgRepository  message.Repository
 }
 
-func NewTextHandler(model ai_model.AiModel, r db.Repository) *TextHandler {
-	return &TextHandler{Model: model, Repository: r}
+func NewTextHandler(model ai_model.AiModel, r chat.Repository, m message.Repository) *TextHandler {
+	return &TextHandler{Model: model, ChatRepository: r, MsgRepository: m}
 }
 
 func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -27,58 +26,65 @@ func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 
 	chatID := update.Message.Chat.ID
-	userText := update.Message.Text
 
-	tz, found, err := h.Repository.GetById(ctx, chatID)
+	found, tz := h.getTimeZone(ctx, b, update)
+	if !found {
+		return
+	}
+
+	payload := h.getInput(ctx, update, tz)
+	reply := h.Model.AskGpt(ctx, chatID, payload)
+	_ = sendWithMenu(ctx, b, h.ChatRepository, chatID, reply)
+}
+
+func (h *TextHandler) getTimeZone(ctx context.Context, b *bot.Bot, update *models.Update) (found bool, tz string) {
+	chatID := update.Message.Chat.ID
+
+	tz, found, err := h.ChatRepository.GetById(ctx, chatID)
 	if err != nil {
-		log.Printf("[TextHandler.Handle] GetById error chatID=%d err=%v", chatID, err)
+		log.Printf("[TextHandler.Handle.getTimeZone] GetById error chatID=%d err=%v", chatID, err)
 		found = false
 	}
+
 	if !found {
-		kb := &models.ReplyKeyboardMarkup{
-			Keyboard:       [][]models.KeyboardButton{{{Text: "/start"}}},
-			ResizeKeyboard: true,
+		reply := "Не помню твою временную зону. Давай начнём сначала. Нажми /start, чтобы настроить часовой пояс или /restart если мы уже знакомы."
+		err := sendWithStart(ctx, b, chatID, reply)
+		if err != nil {
+			log.Printf("[TextHandler.Handle.getTimeZone] Error sendWithStart chatID=%d err=%v", chatID, err)
+			return false, ""
 		}
-		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:      chatID,
-			Text:        "Давай начнём сначала. Нажми /start, чтобы настроить часовой пояс 🚀",
-			ReplyMarkup: kb,
-		}); err != nil {
-			log.Println("[TextHandler.Handle] SendMessage (ask /start):", err)
+		return false, ""
+	}
+
+	return found, tz
+}
+
+func (h *TextHandler) getInput(ctx context.Context, update *models.Update, tz string) ai_model.InputForm {
+	var messages = make([]message.Message, 0, 3)
+	chatID := update.Message.Chat.ID
+	role := h.Model.GetUserRole()
+	text := update.Message.Text
+	ts := update.Message.Date
+
+	current := message.Message{
+		Role:      role.GetValue(),
+		Message:   text,
+		TimeZone:  tz,
+		Timestamp: ts,
+	}
+
+	prev, found, err := h.MsgRepository.GetById(ctx, chatID, tz)
+	if err != nil {
+		log.Printf("[TextHandler.Handle.getInput] GetById error chatID=%d err=%v", chatID, err)
+	}
+
+	if found {
+		for _, msg := range prev {
+			messages = append(messages, msg)
 		}
-		return
 	}
+	messages = append(messages, current)
 
-	tsSec := update.Message.Date
-	type inputFmt struct {
-		UserText  string `json:"userText"`
-		TimeZone  string `json:"timeZone"`
-		Timestamp int    `json:"timestamp"`
-	}
-	payload := map[string]any{
-		"input_format": inputFmt{
-			UserText:  userText,
-			TimeZone:  tz,
-			Timestamp: tsSec,
-		},
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("[TextHandler.Handle] json marshal error: %v", err)
-		body = []byte(userText)
-	}
-
-	raw := h.Model.AskGpt(string(body))
-	parsed, err := parser.ParseStrict(raw)
-	if err != nil {
-		log.Printf("[TextHandler] parse failed: %v; raw=%s", err, raw)
-		_ = sendWithMenu(ctx, b, h.Repository, chatID, "Не смог распарсить ответ. Попробуй ещё раз сформулировать задачу.")
-		return
-	}
-
-	// тут у тебя уже строгое значение по схеме
-	reply := fmt.Sprintf("Задача: %s\nДата/время: %s\nМесто: %s", parsed.Task, parsed.DateTime, parsed.Location)
-	_ = sendWithMenu(ctx, b, h.Repository, chatID, reply)
-
+	log.Println("[TextHandler.getInput] Get history + new message", messages)
+	return ai_model.InputForm{History: messages}
 }
