@@ -155,6 +155,74 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 	}
 }
 
+func (a *AiModelYandex) AskWithTemperature(text string, temperature float64) (reply string, tmp float64) {
+	tmp = temperature
+	if tmp < 0 {
+		tmp = modelTemperature
+	}
+
+	log.Printf("[AiModelYandex.AskWithTemperature] start request %v, %v", text, tmp)
+
+	r := request{
+		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-lite", a.FolderID),
+		Messages: []message{{Role: "user", Text: text}},
+	}
+
+	r.CompletionOptions.Stream = false
+	r.CompletionOptions.Temperature = tmp
+	r.CompletionOptions.MaxTokens = modelMaxTokens
+
+	b, _ := json.Marshal(r)
+
+	httpClient := &http.Client{Timeout: clientTimeout}
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(b))
+	a.prepareHttpRequest(req)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Println("[AiModelYandex.AskGpt] Error making request:", err)
+		return failureRequestReply, tmp
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Println("[AiModelYandex.AskGpt] Body.Close(): ", err)
+		}
+	}(resp.Body)
+
+	if !isRequestSuccessful(resp.StatusCode) {
+		log.Println("[AiModelYandex.AskGpt] Request failed: ", resp.StatusCode)
+		return failureRequestReply, tmp
+	}
+
+	result := struct {
+		Result struct {
+			Alternatives []struct {
+				Message struct {
+					Role string `json:"role"`
+					Text string `json:"text"`
+				} `json:"message"`
+			} `json:"alternatives"`
+		} `json:"result"`
+	}{}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Println("[AiModelYandex.AskGpt] Error while decoding response: ", err)
+		return failureRequestReply, tmp
+	}
+
+	if len(result.Result.Alternatives) == 0 {
+		log.Println("[AiModelYandex.AskGpt] No alternatives found")
+		return failureRequestReply, tmp
+	}
+
+	log.Printf("[AiModelYandex.AskGpt] result: %+v", result)
+
+	return result.Result.Alternatives[0].Message.Text, tmp
+}
+
+// --- private ---
+
 func (a *AiModelYandex) checkAuthorizationInfo() bool {
 	return a.ApiKey != "" && a.FolderID != ""
 }

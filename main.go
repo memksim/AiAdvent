@@ -26,6 +26,7 @@ var (
 	res internalbot.Handler
 	txt internalbot.Handler
 	loc internalbot.Handler
+	tmp internalbot.Handler
 
 	chatRepository chat.Repository
 	msgRepository  msg.Repository
@@ -73,11 +74,12 @@ func main() {
 	// --- model ---
 	model := yandex.NewAiModelYandex(cfg.ApiKey, cfg.RulePath, cfg.FolderId, msgRepository)
 
-	// --- commands ---
+	// --- handlers ---
 	cmd = internalbot.NewCommandHandler(chatRepository)
 	res = internalbot.NewResetHandler(chatRepository)
 	txt = internalbot.NewTextHandler(model, chatRepository, msgRepository)
 	loc = internalbot.NewLocationHandler(timeZone, chatRepository)
+	tmp = internalbot.NewTemperatureHandler(model)
 
 	// --- bot ---
 	b, err := bot.New(cfg.BotToken, bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, u *models.Update) {}))
@@ -99,7 +101,8 @@ func handleText(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	if update.Message.Text != "" {
-		txt.Handle(ctx, b, update)
+		tmp.Handle(ctx, b, update)
+		//TODO заменили на температурный txt.Handle(ctx, b, update)
 		return
 	}
 }
