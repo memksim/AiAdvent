@@ -12,12 +12,13 @@ import (
 
 type TextHandler struct {
 	Model          ai_model.AiModel
+	MultUseCase    ai_model.UseCaseMultiple
 	ChatRepository chat.Repository
 	MsgRepository  message.Repository
 }
 
-func NewTextHandler(model ai_model.AiModel, r chat.Repository, m message.Repository) *TextHandler {
-	return &TextHandler{Model: model, ChatRepository: r, MsgRepository: m}
+func NewTextHandler(model ai_model.AiModel, r chat.Repository, m message.Repository, mult ai_model.UseCaseMultiple) *TextHandler {
+	return &TextHandler{Model: model, ChatRepository: r, MsgRepository: m, MultUseCase: mult}
 }
 
 func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -25,6 +26,34 @@ func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Upd
 		return
 	}
 
+	//TODO
+	h.askMultiple(ctx, b, update)
+}
+
+func (h *TextHandler) askMultiple(ctx context.Context, b *bot.Bot, update *models.Update) {
+	chatID := update.Message.Chat.ID
+
+	var msgs = [1]message.Message{
+		{"user", update.Message.Text, "UTC", 0},
+	}
+
+	input := ai_model.InputForm{
+		History: msgs[:],
+	}
+
+	log.Println("[TextHandler.askMultiple] input", input)
+	h.MultUseCase.AskMultiple(ctx, chatID, input, func(reply string) {
+		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: chatID,
+			Text:   reply,
+		})
+		if err != nil {
+			log.Println("[TemperatureHandler.Handle] Error send message:", err)
+		}
+	})
+}
+
+func (h *TextHandler) askBaseQuestion(ctx context.Context, b *bot.Bot, update *models.Update) {
 	chatID := update.Message.Chat.ID
 
 	found, tz := h.getTimeZone(ctx, b, update)
@@ -36,6 +65,8 @@ func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Upd
 	reply := h.Model.AskGpt(ctx, chatID, payload)
 	_ = sendWithMenu(ctx, b, h.ChatRepository, chatID, reply)
 }
+
+//--- utils ---
 
 func (h *TextHandler) getTimeZone(ctx context.Context, b *bot.Bot, update *models.Update) (found bool, tz string) {
 	chatID := update.Message.Chat.ID
