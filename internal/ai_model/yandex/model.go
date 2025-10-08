@@ -139,7 +139,7 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 		// Формируем ответ с рассуждениями, если они есть
 		responseText := parsed.Question
 		if parsed.Reasoning != "" {
-			responseText = fmt.Sprintf("%s\n\nРассуждения: %s", parsed.Question, parsed.Reasoning)
+			responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, parsed.Question)
 		}
 
 		if dberr := a.Repository.Upsert(ctx, chatId, model.GetValue(), responseText, currTime); dberr != nil {
@@ -165,7 +165,7 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			parsed.Task, parsed.DateTime, parsed.Location,
 		)
 		if parsed.Reasoning != "" {
-			responseText += fmt.Sprintf("\n\nРассуждения: %s", parsed.Reasoning)
+			responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, responseText)
 		}
 
 		return responseText
