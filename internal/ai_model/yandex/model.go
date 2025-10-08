@@ -2,6 +2,7 @@ package yandex
 
 import (
 	"adventBot/internal/ai_model"
+	"adventBot/internal/config"
 	dbmessage "adventBot/internal/db/message"
 	"bytes"
 	"context"
@@ -26,16 +27,23 @@ type AiModelYandex struct {
 	ApiKey     string
 	FolderID   string
 	system     message
+	systemCoT  message
 	Repository dbmessage.Repository
 }
 
-func NewAiModelYandex(apiKey, rulePath string, folderId string, r dbmessage.Repository) *AiModelYandex {
+func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repository) *AiModelYandex {
+	cotRulePath := cfg.RulePathCot
+
 	return &AiModelYandex{
-		ApiKey:   apiKey,
+		ApiKey:   cfg.ApiKey,
 		FolderID: folderId,
 		system: message{
 			Role: "system",
-			Text: ai_model.MustReadFile(rulePath),
+			Text: ai_model.MustReadFile(cfg.RulePath),
+		},
+		systemCoT: message{
+			Role: "system",
+			Text: ai_model.MustReadFile(cotRulePath),
 		},
 		Repository: r,
 	}
@@ -45,7 +53,7 @@ func (a *AiModelYandex) GetUserRole() ai_model.Role {
 	return &user
 }
 
-func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_model.InputForm) string {
+func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_model.InputForm, isCot bool) string {
 
 	log.Println("[AiModelYandex.AskGpt] input form: ", inputForm)
 
@@ -54,7 +62,7 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 		return failureRequestReply
 	}
 
-	reqBody, err := a.prepareModelRequest(inputForm)
+	reqBody, err := a.prepareModelRequest(inputForm, isCot)
 	if err != nil {
 		log.Println("[AiModelYandex.prepareModelRequest] Failed to prepare model request", err)
 		return failureRequestReply
@@ -127,11 +135,18 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 		}
 
 		currTime := int(time.Now().UnixMilli()) / 1000
-		if dberr := a.Repository.Upsert(ctx, chatId, model.GetValue(), parsed.Question, currTime); dberr != nil {
+
+		// Формируем ответ с рассуждениями, если они есть
+		responseText := parsed.Question
+		if parsed.Reasoning != "" {
+			responseText = fmt.Sprintf("%s\n\nРассуждения: %s", parsed.Question, parsed.Reasoning)
+		}
+
+		if dberr := a.Repository.Upsert(ctx, chatId, model.GetValue(), responseText, currTime); dberr != nil {
 			log.Println("[AiModelYandex.AskGpt] Repository.Upsert assistant error:", err)
 		}
 
-		return parsed.Question
+		return responseText
 
 	case modeFinal:
 		if _, err := time.Parse(time.RFC3339, parsed.DateTime); err != nil {
@@ -144,10 +159,16 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			log.Println("[AiModelYandex.AskGpt] failed to delete chat history:", err)
 		}
 
-		return fmt.Sprintf(
+		// Формируем ответ с рассуждениями, если они есть
+		responseText := fmt.Sprintf(
 			"Задача: %s\nДата/время: %s\nМесто: %s",
 			parsed.Task, parsed.DateTime, parsed.Location,
 		)
+		if parsed.Reasoning != "" {
+			responseText += fmt.Sprintf("\n\nРассуждения: %s", parsed.Reasoning)
+		}
+
+		return responseText
 
 	default:
 		log.Printf("[AiModelYandex.AskGpt] unknown mode: %s; raw=%s", parsed.Mode, modelText)
@@ -227,9 +248,15 @@ func (a *AiModelYandex) checkAuthorizationInfo() bool {
 	return a.ApiKey != "" && a.FolderID != ""
 }
 
-func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm) ([]byte, error) {
+func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm, isCot bool) ([]byte, error) {
 	dst := make(messages, 0, len(form.History))
-	dst = append(dst, a.system)
+
+	if isCot {
+		dst = append(dst, a.systemCoT)
+	} else {
+		dst = append(dst, a.system)
+	}
+
 	for _, m := range form.History {
 		dst = append(dst, mapToInternal(m))
 	}

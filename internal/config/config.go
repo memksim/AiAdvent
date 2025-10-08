@@ -13,6 +13,7 @@ type Config struct {
 	GeonamesUser string
 	DbPath       string
 	RulePath     string
+	RulePathCot  string
 }
 
 func Load() (c Config, err error) {
@@ -28,6 +29,7 @@ func Load() (c Config, err error) {
 		GeonamesUser: os.Getenv("GEONAMES_USER"),
 		DbPath:       os.Getenv("DB_PATH"),
 		RulePath:     os.Getenv("RULE_PATH"),
+		RulePathCot:  os.Getenv("RULE_PATH_COT"),
 	}
 
 	if c.BotToken == "" {

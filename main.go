@@ -72,7 +72,7 @@ func main() {
 	}()
 
 	// --- model ---
-	model := yandex.NewAiModelYandex(cfg.ApiKey, cfg.RulePath, cfg.FolderId, msgRepository)
+	model := yandex.NewAiModelYandex(&cfg, cfg.FolderId, msgRepository)
 
 	// --- handlers ---
 	cmd = internalbot.NewCommandHandler(chatRepository)
@@ -101,8 +101,7 @@ func handleText(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	if update.Message.Text != "" {
-		tmp.Handle(ctx, b, update)
-		//TODO заменили на температурный txt.Handle(ctx, b, update)
+		txt.Handle(ctx, b, update)
 		return
 	}
 }

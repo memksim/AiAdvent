@@ -20,9 +20,10 @@ type response struct {
 	Mode mode `json:"mode"` // "final" | "ask"
 
 	// final
-	Task     string `json:"task,omitempty"`
-	DateTime string `json:"dateTime,omitempty"`
-	Location string `json:"location,omitempty"`
+	Task      string `json:"task,omitempty"`
+	DateTime  string `json:"dateTime,omitempty"`
+	Location  string `json:"location,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"` // Полные пошаговые рассуждения модели
 
 	// ask
 	Question string   `json:"question,omitempty"`

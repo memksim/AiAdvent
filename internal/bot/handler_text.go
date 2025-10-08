@@ -33,7 +33,7 @@ func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 
 	payload := h.getInput(ctx, update, tz)
-	reply := h.Model.AskGpt(ctx, chatID, payload)
+	reply := h.Model.AskGpt(ctx, chatID, payload, true)
 	_ = sendWithMenu(ctx, b, h.ChatRepository, chatID, reply)
 }
 
