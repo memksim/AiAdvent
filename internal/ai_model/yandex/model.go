@@ -29,6 +29,7 @@ type AiModelYandex struct {
 	system     message
 	systemCoT  message
 	Repository dbmessage.Repository
+	Finalizer  *FinalizerModel
 }
 
 func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repository) *AiModelYandex {
@@ -46,6 +47,7 @@ func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repositor
 			Text: ai_model.MustReadFile(cotRulePath),
 		},
 		Repository: r,
+		Finalizer:  NewFinalizerModel(cfg, folderId, "yandexgpt-5-lite/latest"),
 	}
 }
 
@@ -108,6 +110,7 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 		log.Println("[AiModelYandex.AskGpt] no alternatives in response")
 		return failureRequestReply
 	}
+	log.Printf("response:\n%s", yr)
 	modelText := yr.Result.Alternatives[0].Message.Text
 	modelText = stripCodeFence(modelText)
 	if strings.TrimSpace(modelText) == "" {
@@ -118,7 +121,9 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 	var parsed response
 	if err := json.Unmarshal([]byte(modelText), &parsed); err != nil {
 		log.Printf("[AiModelYandex.AskGpt] cannot parse model JSON: %v; text=%s", err, modelText)
-		return failureRequestReply
+		// Если не удалось распарсить JSON, возможно модель вернула обычный текст
+		// В этом случае возвращаем текст как есть для режима ask
+		return fmt.Sprintf("%s\n\n📱 Модель: %s", modelText, yr.Result.ModelVersion)
 	}
 
 	switch parsed.Mode {
@@ -142,6 +147,9 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, parsed.Question)
 		}
 
+		// Добавляем информацию о версии модели
+		responseText = fmt.Sprintf("%s\n\n📱 Модель: %s", responseText, yr.Result.ModelVersion)
+
 		if dberr := a.Repository.Upsert(ctx, chatId, model.GetValue(), responseText, currTime); dberr != nil {
 			log.Println("[AiModelYandex.AskGpt] Repository.Upsert assistant error:", err)
 		}
@@ -159,16 +167,29 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			log.Println("[AiModelYandex.AskGpt] failed to delete chat history:", err)
 		}
 
-		// Формируем ответ с рассуждениями, если они есть
-		responseText := fmt.Sprintf(
-			"Задача: %s\nДата/время: %s\nМесто: %s",
-			parsed.Task, parsed.DateTime, parsed.Location,
-		)
-		if parsed.Reasoning != "" {
-			responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, responseText)
+		// Создаем JSON с final ответом для передачи в финализатор
+		finalJson, err := json.Marshal(parsed)
+		if err != nil {
+			log.Printf("[AiModelYandex.AskGpt] failed to marshal final response: %v", err)
+			return failureRequestReply
 		}
 
-		return responseText
+		// Используем финализатор для форматирования ответа
+		finalizedText := a.Finalizer.Finalize(string(finalJson))
+		if finalizedText == "Не удалось обработать ответ модели" {
+			// Если финализатор не сработал, возвращаем стандартный формат
+			responseText := fmt.Sprintf(
+				"Задача: %s\nДата/время: %s\nМесто: %s",
+				parsed.Task, parsed.DateTime, parsed.Location,
+			)
+			if parsed.Reasoning != "" {
+				responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, responseText)
+			}
+			responseText = fmt.Sprintf("%s\n\n📱 Модель: %s", responseText, yr.Result.ModelVersion)
+			return responseText
+		}
+
+		return finalizedText
 
 	default:
 		log.Printf("[AiModelYandex.AskGpt] unknown mode: %s; raw=%s", parsed.Mode, modelText)
@@ -185,7 +206,7 @@ func (a *AiModelYandex) AskWithTemperature(text string, temperature float64) (re
 	log.Printf("[AiModelYandex.AskWithTemperature] start request %v, %v", text, tmp)
 
 	r := request{
-		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-lite", a.FolderID),
+		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-5-pro/latest", a.FolderID),
 		Messages: []message{{Role: "user", Text: text}},
 	}
 
@@ -262,7 +283,7 @@ func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm, isCot bool)
 	}
 
 	r := request{
-		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-lite", a.FolderID),
+		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt/rc", a.FolderID),
 		Messages: dst.filterEmpty(),
 	}
 

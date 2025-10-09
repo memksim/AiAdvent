@@ -1,0 +1,15 @@
+curl -X POST \
+  "https://llm.api.cloud.yandex.net/foundationModels/v1/completion" \
+  -H "Authorization: Bearer $IAM_TOKEN" \
+  -H "x-folder-id: $FOLDER_ID" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "modelUri": "gpt://<folder-id>/yandexgpt/latest",
+    "completionOptions": {
+      "temperature": 0.3,
+      "maxTokens": "2000"
+    },
+    "messages": [
+      {"role": "user", "text": "Напиши стих про осень"}
+    ]
+  }'

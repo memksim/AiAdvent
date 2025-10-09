@@ -7,13 +7,14 @@ import (
 )
 
 type Config struct {
-	BotToken     string
-	ApiKey       string
-	FolderId     string
-	GeonamesUser string
-	DbPath       string
-	RulePath     string
-	RulePathCot  string
+	BotToken          string
+	ApiKey            string
+	FolderId          string
+	GeonamesUser      string
+	DbPath            string
+	RulePath          string
+	RulePathCot       string
+	RulePathFinalizer string
 }
 
 func Load() (c Config, err error) {
@@ -23,13 +24,14 @@ func Load() (c Config, err error) {
 	}
 
 	c = Config{
-		BotToken:     os.Getenv("TELEGRAM_BOT_TOKEN"),
-		ApiKey:       os.Getenv("YC_API_KEY"),
-		FolderId:     os.Getenv("YC_FOLDER_ID"),
-		GeonamesUser: os.Getenv("GEONAMES_USER"),
-		DbPath:       os.Getenv("DB_PATH"),
-		RulePath:     os.Getenv("RULE_PATH"),
-		RulePathCot:  os.Getenv("RULE_PATH_COT"),
+		BotToken:          os.Getenv("TELEGRAM_BOT_TOKEN"),
+		ApiKey:            os.Getenv("YC_API_KEY"),
+		FolderId:          os.Getenv("YC_FOLDER_ID"),
+		GeonamesUser:      os.Getenv("GEONAMES_USER"),
+		DbPath:            os.Getenv("DB_PATH"),
+		RulePath:          os.Getenv("RULE_PATH"),
+		RulePathCot:       os.Getenv("RULE_PATH_COT"),
+		RulePathFinalizer: os.Getenv("RULE_PATH_FINALIZER"),
 	}
 
 	if c.BotToken == "" {

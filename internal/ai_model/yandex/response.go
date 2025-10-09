@@ -39,5 +39,14 @@ type yaResponse struct {
 			} `json:"message"`
 			Status string `json:"status"`
 		} `json:"alternatives"`
+		Usage struct {
+			InputTextTokens         string `json:"inputTextTokens"`
+			CompletionTokens        string `json:"completionTokens"`
+			TotalTokens             string `json:"totalTokens"`
+			CompletionTokensDetails struct {
+				ReasoningTokens string `json:"reasoningTokens"`
+			} `json:"completionTokensDetails"`
+		} `json:"usage"`
+		ModelVersion string `json:"modelVersion"`
 	} `json:"result"`
 }
