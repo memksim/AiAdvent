@@ -1,0 +1,4 @@
+{
+  "modelUri": "uri of llm model",
+  "text": "input text: user message, prompt, chat history e.t.c."
+}

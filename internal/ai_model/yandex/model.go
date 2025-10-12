@@ -2,6 +2,7 @@ package yandex
 
 import (
 	"adventBot/internal/ai_model"
+	"adventBot/internal/ai_model/yandex/summary"
 	"adventBot/internal/config"
 	dbmessage "adventBot/internal/db/message"
 	"bytes"
@@ -18,25 +19,25 @@ import (
 const url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 const clientTimeout = 60 * time.Second
 const failureRequestReply = "Не удалось выполнить запрос. Повторите позже"
-const modelTemperature = 0.1
-const modelMaxTokens = 4000
+const modelTemperature = 0.3
 
 type messages []message
 
 type AiModelYandex struct {
-	ApiKey     string
+	IamToken   string
 	FolderID   string
 	system     message
 	systemCoT  message
 	Repository dbmessage.Repository
 	Finalizer  *FinalizerModel
+	Summarizer *summary.Summarizer
 }
 
 func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repository) *AiModelYandex {
 	cotRulePath := cfg.RulePathCot
 
 	return &AiModelYandex{
-		ApiKey:   cfg.ApiKey,
+		IamToken: cfg.ApiKey,
 		FolderID: folderId,
 		system: message{
 			Role: "system",
@@ -48,6 +49,7 @@ func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repositor
 		},
 		Repository: r,
 		Finalizer:  NewFinalizerModel(cfg, folderId, "yandexgpt-5-lite/latest"),
+		Summarizer: summary.NewSummarizer(500, 500, 1000, cfg.ApiKey, fmt.Sprintf("gpt://%s/%v", cfg.FolderId, "yandexgpt-5-lite/latest")),
 	}
 }
 
@@ -60,7 +62,7 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 	log.Println("[AiModelYandex.AskGpt] input form: ", inputForm)
 
 	if !a.checkAuthorizationInfo() {
-		log.Println("[AiModelYandex.AskGpt] ApiKey or FolderID is empty")
+		log.Println("[AiModelYandex.AskGpt] IamToken or FolderID is empty")
 		return failureRequestReply
 	}
 
@@ -143,16 +145,19 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 
 		// Формируем ответ с рассуждениями, если они есть
 		responseText := parsed.Question
-		if parsed.Reasoning != "" {
-			responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, parsed.Question)
-		}
-
-		// Добавляем информацию о версии модели
-		responseText = fmt.Sprintf("%s\n\n📱 Модель: %s", responseText, yr.Result.ModelVersion)
 
 		if dberr := a.Repository.Upsert(ctx, chatId, model.GetValue(), responseText, currTime); dberr != nil {
 			log.Println("[AiModelYandex.AskGpt] Repository.Upsert assistant error:", err)
 		}
+
+		if parsed.Reasoning != "" {
+			responseText = fmt.Sprintf("%s\n\n%s", parsed.Reasoning, parsed.Question)
+		}
+
+		// Добавляем информацию о версии модели и токенах
+		responseText = fmt.Sprintf("%s\n\n📱 Модель: %s\n🔤 Токены: %s/%s (вход/выход)",
+			responseText, yr.Result.ModelVersion,
+			yr.Result.Usage.InputTextTokens, yr.Result.Usage.CompletionTokens)
 
 		return responseText
 
@@ -167,7 +172,8 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			log.Println("[AiModelYandex.AskGpt] failed to delete chat history:", err)
 		}
 
-		// Создаем JSON с final ответом для передачи в финализатор
+		//TODO выкл финализатор
+		/*// Создаем JSON с final ответом для передачи в финализатор
 		finalJson, err := json.Marshal(parsed)
 		if err != nil {
 			log.Printf("[AiModelYandex.AskGpt] failed to marshal final response: %v", err)
@@ -188,6 +194,20 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			responseText = fmt.Sprintf("%s\n\n📱 Модель: %s", responseText, yr.Result.ModelVersion)
 			return responseText
 		}
+
+		// Добавляем информацию о версии модели и токенах
+		finalizedText = fmt.Sprintf("%s\n\n Токены: %s/%s (вход/выход)",
+			finalizedText, yr.Result.Usage.InputTextTokens, yr.Result.Usage.CompletionTokens,
+		)*/
+
+		finalizedText := fmt.Sprintf(
+			"Задача: %s\nДата/время: %s\nМесто: %s",
+			parsed.Task, parsed.DateTime, parsed.Location,
+		)
+
+		finalizedText = fmt.Sprintf("%s\n\n Токены: %s/%s (вход/выход)",
+			finalizedText, yr.Result.Usage.InputTextTokens, yr.Result.Usage.CompletionTokens,
+		)
 
 		return finalizedText
 
@@ -212,7 +232,7 @@ func (a *AiModelYandex) AskWithTemperature(text string, temperature float64) (re
 
 	r.CompletionOptions.Stream = false
 	r.CompletionOptions.Temperature = tmp
-	r.CompletionOptions.MaxTokens = modelMaxTokens
+	r.CompletionOptions.MaxTokens = a.Summarizer.MaxOutputTokens
 
 	b, _ := json.Marshal(r)
 
@@ -266,30 +286,58 @@ func (a *AiModelYandex) AskWithTemperature(text string, temperature float64) (re
 // --- private ---
 
 func (a *AiModelYandex) checkAuthorizationInfo() bool {
-	return a.ApiKey != "" && a.FolderID != ""
+	return a.IamToken != "" && a.FolderID != ""
 }
 
 func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm, isCot bool) ([]byte, error) {
 	dst := make(messages, 0, len(form.History))
+	history := make([]string, 0, len(form.History))
 
+	var sys string
 	if isCot {
-		dst = append(dst, a.systemCoT)
+		sys = a.systemCoT.Text
 	} else {
-		dst = append(dst, a.system)
+		sys = a.system.Text
 	}
 
 	for _, m := range form.History {
-		dst = append(dst, mapToInternal(m))
+		history = append(history, m.Message)
+	}
+
+	sumSys, sumHistory := a.Summarizer.Summarize(sys, history)
+	if sumSys != "" {
+		dst = append(dst, message{
+			Role: "system",
+			Text: sumSys,
+		})
+	} else {
+		if isCot {
+			dst = append(dst, a.systemCoT)
+		} else {
+			dst = append(dst, a.system)
+		}
+	}
+	if sumHistory != nil {
+		for _, m := range sumHistory {
+			dst = append(dst, message{
+				Role: "user",
+				Text: m,
+			})
+		}
+	} else {
+		for _, m := range form.History {
+			dst = append(dst, mapToInternal(m))
+		}
 	}
 
 	r := request{
-		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt/rc", a.FolderID),
+		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-5-pro/latest", a.FolderID),
 		Messages: dst.filterEmpty(),
 	}
 
 	r.CompletionOptions.Stream = false
 	r.CompletionOptions.Temperature = modelTemperature
-	r.CompletionOptions.MaxTokens = modelMaxTokens
+	r.CompletionOptions.MaxTokens = a.Summarizer.MaxOutputTokens
 
 	req, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
@@ -301,7 +349,7 @@ func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm, isCot bool)
 }
 
 func (a *AiModelYandex) prepareHttpRequest(req *http.Request) {
-	req.Header.Set("Authorization", "Api-Key "+a.ApiKey)
+	req.Header.Set("Authorization", "Api-Key "+a.IamToken)
 	req.Header.Set("Content-Type", "application/json")
 }
 

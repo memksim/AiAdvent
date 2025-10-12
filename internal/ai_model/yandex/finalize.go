@@ -63,7 +63,7 @@ func (f *FinalizerModel) Finalize(rawJson string) string {
 	log.Printf("[FinalizerModel.Finalize] processing raw JSON: %s", rawJson)
 
 	if f.ApiKey == "" || f.FolderID == "" {
-		log.Println("[FinalizerModel.Finalize] ApiKey or FolderID is empty")
+		log.Println("[FinalizerModel.Finalize] IamToken or FolderID is empty")
 		return "Не удалось обработать ответ модели"
 	}
 
