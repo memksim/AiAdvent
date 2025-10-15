@@ -5,8 +5,7 @@ import (
 	"adventBot/internal/timezone"
 	"context"
 	"fmt"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
 	"time"
 )
@@ -20,7 +19,7 @@ func NewLocationHandler(tz timezone.ApiTimezone, r chat.Repository) *LocationHan
 	return &LocationHandler{TzAPI: tz, Repository: r}
 }
 
-func (h *LocationHandler) Handle(ctx context.Context, b *bot.Bot, upd *models.Update) {
+func (h *LocationHandler) Handle(ctx context.Context, b *tgbotapi.BotAPI, upd *tgbotapi.Update) {
 	if upd == nil || upd.Message == nil {
 		log.Println("[LocationHandler.Handle] nil update/message")
 		return

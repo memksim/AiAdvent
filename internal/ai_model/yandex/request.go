@@ -24,5 +24,5 @@ type request struct {
 		Temperature float64 `json:"temperature"`
 		MaxTokens   int     `json:"maxTokens"`
 	} `json:"completionOptions"`
-	Messages []message `json:"messages"`
+	Messages []MessageYandexGpt `json:"messages"`
 }

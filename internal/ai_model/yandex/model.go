@@ -2,9 +2,10 @@ package yandex
 
 import (
 	"adventBot/internal/ai_model"
-	"adventBot/internal/ai_model/yandex/summary"
+	"adventBot/internal/ai_model/yandex/summary/prompt"
 	"adventBot/internal/config"
 	dbmessage "adventBot/internal/db/message"
+	"adventBot/internal/db/task"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -21,35 +22,37 @@ const clientTimeout = 60 * time.Second
 const failureRequestReply = "Не удалось выполнить запрос. Повторите позже"
 const modelTemperature = 0.3
 
-type messages []message
+type messages []MessageYandexGpt
 
 type AiModelYandex struct {
-	IamToken   string
-	FolderID   string
-	system     message
-	systemCoT  message
-	Repository dbmessage.Repository
-	Finalizer  *FinalizerModel
-	Summarizer *summary.Summarizer
+	IamToken       string
+	FolderID       string
+	system         MessageYandexGpt
+	systemCoT      MessageYandexGpt
+	Repository     dbmessage.Repository
+	TaskRepository task.Repository
+	Finalizer      *FinalizerModel
+	Summarizer     *prompt.Summarizer
 }
 
-func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repository) *AiModelYandex {
+func NewAiModelYandex(cfg *config.Config, folderId string, r dbmessage.Repository, tr task.Repository) *AiModelYandex {
 	cotRulePath := cfg.RulePathCot
 
 	return &AiModelYandex{
 		IamToken: cfg.ApiKey,
 		FolderID: folderId,
-		system: message{
+		system: MessageYandexGpt{
 			Role: "system",
 			Text: ai_model.MustReadFile(cfg.RulePath),
 		},
-		systemCoT: message{
+		systemCoT: MessageYandexGpt{
 			Role: "system",
 			Text: ai_model.MustReadFile(cotRulePath),
 		},
-		Repository: r,
-		Finalizer:  NewFinalizerModel(cfg, folderId, "yandexgpt-5-lite/latest"),
-		Summarizer: summary.NewSummarizer(500, 500, 1000, cfg.ApiKey, fmt.Sprintf("gpt://%s/%v", cfg.FolderId, "yandexgpt-5-lite/latest")),
+		Repository:     r,
+		TaskRepository: tr,
+		Finalizer:      NewFinalizerModel(cfg, folderId, "yandexgpt-5-lite/latest"),
+		Summarizer:     prompt.NewSummarizer(500, 500, 1000, cfg.ApiKey, fmt.Sprintf("gpt://%s/%v", cfg.FolderId, "yandexgpt-5-lite/latest")),
 	}
 }
 
@@ -172,13 +175,14 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 			log.Println("[AiModelYandex.AskGpt] failed to delete chat history:", err)
 		}
 
-		//TODO выкл финализатор
-		/*// Создаем JSON с final ответом для передачи в финализатор
+		// Создаем JSON с final ответом для передачи в финализатор
 		finalJson, err := json.Marshal(parsed)
 		if err != nil {
 			log.Printf("[AiModelYandex.AskGpt] failed to marshal final response: %v", err)
 			return failureRequestReply
 		}
+
+		a.saveTask(ctx, chatId, finalJson)
 
 		// Используем финализатор для форматирования ответа
 		finalizedText := a.Finalizer.Finalize(string(finalJson))
@@ -196,15 +200,6 @@ func (a *AiModelYandex) AskGpt(ctx context.Context, chatId int64, inputForm ai_m
 		}
 
 		// Добавляем информацию о версии модели и токенах
-		finalizedText = fmt.Sprintf("%s\n\n Токены: %s/%s (вход/выход)",
-			finalizedText, yr.Result.Usage.InputTextTokens, yr.Result.Usage.CompletionTokens,
-		)*/
-
-		finalizedText := fmt.Sprintf(
-			"Задача: %s\nДата/время: %s\nМесто: %s",
-			parsed.Task, parsed.DateTime, parsed.Location,
-		)
-
 		finalizedText = fmt.Sprintf("%s\n\n Токены: %s/%s (вход/выход)",
 			finalizedText, yr.Result.Usage.InputTextTokens, yr.Result.Usage.CompletionTokens,
 		)
@@ -227,7 +222,7 @@ func (a *AiModelYandex) AskWithTemperature(text string, temperature float64) (re
 
 	r := request{
 		ModelURI: fmt.Sprintf("gpt://%s/yandexgpt-5-pro/latest", a.FolderID),
-		Messages: []message{{Role: "user", Text: text}},
+		Messages: []MessageYandexGpt{{Role: "user", Text: text}},
 	}
 
 	r.CompletionOptions.Stream = false
@@ -263,7 +258,7 @@ func (a *AiModelYandex) AskWithTemperature(text string, temperature float64) (re
 				Message struct {
 					Role string `json:"role"`
 					Text string `json:"text"`
-				} `json:"message"`
+				} `json:"MessageYandexGpt"`
 			} `json:"alternatives"`
 		} `json:"result"`
 	}{}
@@ -306,7 +301,7 @@ func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm, isCot bool)
 
 	sumSys, sumHistory := a.Summarizer.Summarize(sys, history)
 	if sumSys != "" {
-		dst = append(dst, message{
+		dst = append(dst, MessageYandexGpt{
 			Role: "system",
 			Text: sumSys,
 		})
@@ -319,7 +314,7 @@ func (a *AiModelYandex) prepareModelRequest(form ai_model.InputForm, isCot bool)
 	}
 	if sumHistory != nil {
 		for _, m := range sumHistory {
-			dst = append(dst, message{
+			dst = append(dst, MessageYandexGpt{
 				Role: "user",
 				Text: m,
 			})
@@ -357,7 +352,7 @@ func isRequestSuccessful(status int) bool {
 	return status >= 200 && status < 300
 }
 
-func mapToInternal(src dbmessage.Message) message {
+func mapToInternal(src dbmessage.Message) MessageYandexGpt {
 	text := src.Message
 	if src.TimeZone != "" {
 		text += fmt.Sprintf(" (timeZone: %s)", src.TimeZone)
@@ -366,7 +361,7 @@ func mapToInternal(src dbmessage.Message) message {
 		text += fmt.Sprintf(" [timestamp: %d]", src.Timestamp)
 	}
 
-	return message{
+	return MessageYandexGpt{
 		Role: src.Role,
 		Text: text,
 	}
@@ -399,4 +394,19 @@ func stripCodeFence(s string) string {
 		s = strings.TrimSuffix(s, "```")
 	}
 	return strings.TrimSpace(s)
+}
+
+func (y *AiModelYandex) saveTask(ctx context.Context, chatId int64, raw []byte) {
+	var t task.Task
+	err := json.Unmarshal(raw, &t)
+	if err != nil {
+		log.Println("[AiModelYandex.saveTask] Error while decoding task:", err)
+		err = nil
+	}
+	t.ChatID = chatId
+	log.Printf("[AiModelYandex.saveTask] Saving \ntask:%v, \nraw:%s", t, string(raw))
+	err = y.TaskRepository.Upsert(ctx, t)
+	if err != nil {
+		log.Println("[AiModelYandex.saveTask] Error while saving task:", err)
+	}
 }

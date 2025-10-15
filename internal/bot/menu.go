@@ -3,51 +3,58 @@ package bot
 import (
 	"adventBot/internal/db/chat"
 	"context"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func sendWithMenu(ctx context.Context, b *bot.Bot, r chat.Repository, chatID int64, text string) error {
+func sendWithMenu(ctx context.Context, b *tgbotapi.BotAPI, r chat.Repository, chatID int64, text string) error {
 	kb := buildMainKeyboard(ctx, r, chatID)
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        text,
-		ReplyMarkup: kb,
-	})
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = kb
+	_, err := b.Send(msg)
 	return err
 }
 
-func sendWithStart(ctx context.Context, b *bot.Bot, chatID int64, text string) error {
-	kb := &models.ReplyKeyboardMarkup{
-		Keyboard: [][]models.KeyboardButton{
-			{{Text: "/start"}},
-		},
-		ResizeKeyboard:  true,
-		OneTimeKeyboard: false,
-		Selective:       false,
-	}
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        text,
-		ReplyMarkup: kb,
-	})
+func sendWithStart(_ context.Context, b *tgbotapi.BotAPI, chatID int64, text string) error {
+	kb := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("/start"),
+		),
+	)
+	kb.ResizeKeyboard = true
+	kb.OneTimeKeyboard = false
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = kb
+	_, err := b.Send(msg)
 	return err
 }
 
-func buildMainKeyboard(ctx context.Context, r chat.Repository, chatID int64) *models.ReplyKeyboardMarkup {
+func buildMainKeyboard(ctx context.Context, r chat.Repository, chatID int64) tgbotapi.ReplyKeyboardMarkup {
 	_, found, _ := r.GetById(ctx, chatID)
 
-	btn := "/start"
 	if found {
-		btn = "/restart"
+		keyboard := tgbotapi.NewReplyKeyboard(
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("/today"),
+				tgbotapi.NewKeyboardButton("/tasks"),
+			),
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("/trigger"),
+				tgbotapi.NewKeyboardButton("/restart"),
+			),
+		)
+		keyboard.ResizeKeyboard = true
+		keyboard.OneTimeKeyboard = false
+		return keyboard
 	}
 
-	return &models.ReplyKeyboardMarkup{
-		Keyboard: [][]models.KeyboardButton{
-			{{Text: btn}},
-		},
-		ResizeKeyboard:  true,
-		OneTimeKeyboard: false,
-		Selective:       false,
-	}
+	keyboard := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("/start"),
+		),
+	)
+	keyboard.ResizeKeyboard = true
+	keyboard.OneTimeKeyboard = false
+
+	return keyboard
 }

@@ -2,10 +2,9 @@ package bot
 
 import (
 	"context"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Handler interface {
-	Handle(ctx context.Context, b *bot.Bot, update *models.Update)
+	Handle(ctx context.Context, b *tgbotapi.BotAPI, update *tgbotapi.Update)
 }

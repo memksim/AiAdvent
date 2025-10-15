@@ -5,8 +5,7 @@ import (
 	"adventBot/internal/db/chat"
 	"adventBot/internal/db/message"
 	"context"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
 )
 
@@ -20,7 +19,7 @@ func NewTextHandler(model ai_model.AiModel, r chat.Repository, m message.Reposit
 	return &TextHandler{Model: model, ChatRepository: r, MsgRepository: m}
 }
 
-func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *TextHandler) Handle(ctx context.Context, b *tgbotapi.BotAPI, update *tgbotapi.Update) {
 	if update == nil || update.Message == nil || update.Message.Text == "" {
 		return
 	}
@@ -37,7 +36,7 @@ func (h *TextHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Upd
 	_ = sendWithMenu(ctx, b, h.ChatRepository, chatID, reply)
 }
 
-func (h *TextHandler) getTimeZone(ctx context.Context, b *bot.Bot, update *models.Update) (found bool, tz string) {
+func (h *TextHandler) getTimeZone(ctx context.Context, b *tgbotapi.BotAPI, update *tgbotapi.Update) (found bool, tz string) {
 	chatID := update.Message.Chat.ID
 
 	tz, found, err := h.ChatRepository.GetById(ctx, chatID)
@@ -59,7 +58,7 @@ func (h *TextHandler) getTimeZone(ctx context.Context, b *bot.Bot, update *model
 	return found, tz
 }
 
-func (h *TextHandler) getInput(ctx context.Context, update *models.Update, tz string) ai_model.InputForm {
+func (h *TextHandler) getInput(ctx context.Context, update *tgbotapi.Update, tz string) ai_model.InputForm {
 	var messages = make([]message.Message, 0, 3)
 	chatID := update.Message.Chat.ID
 	role := h.Model.GetUserRole()

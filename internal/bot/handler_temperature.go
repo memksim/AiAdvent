@@ -4,8 +4,7 @@ import (
 	"adventBot/internal/ai_model"
 	"context"
 	"fmt"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
 	"regexp"
 	"strconv"
@@ -20,26 +19,23 @@ func NewTemperatureHandler(model ai_model.AiModel) *TemperatureHandler {
 	return &TemperatureHandler{model}
 }
 
-func (h *TemperatureHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *TemperatureHandler) Handle(ctx context.Context, b *tgbotapi.BotAPI, update *tgbotapi.Update) {
 	txt, temp, success := parseMessage(update.Message.Text)
 
 	if !success {
-		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.Chat.ID,
-			Text:   "Не удалось выполнить запрос. Повторите позже.",
-		})
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Не удалось выполнить запрос. Повторите позже.")
+		_, err := b.Send(msg)
 		if err != nil {
 			log.Println("[TemperatureHandler.Handle] Error send message]")
 		}
+		return
 	}
 
 	var reply string
 	reply, temp = h.Model.AskWithTemperature(txt, temp)
 
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   fmt.Sprintf("%v\n%s", temp, reply),
-	})
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("%v\n%s", temp, reply))
+	_, err := b.Send(msg)
 	if err != nil {
 		log.Println("[TemperatureHandler.Handle] Error send message]")
 	}

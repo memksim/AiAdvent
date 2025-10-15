@@ -22,8 +22,8 @@ type FinalizerModel struct {
 }
 
 type finalizerRequest struct {
-	ModelURI          string    `json:"modelUri"`
-	Messages          []message `json:"messages"`
+	ModelURI          string             `json:"modelUri"`
+	Messages          []MessageYandexGpt `json:"messages"`
 	CompletionOptions struct {
 		Stream      bool    `json:"stream"`
 		Temperature float64 `json:"temperature"`
@@ -33,7 +33,7 @@ type finalizerRequest struct {
 
 type finalizerResponse struct {
 	Mode      string `json:"mode"`
-	Message   string `json:"message"`
+	Message   string `json:"MessageYandexGpt"`
 	Reasoning string `json:"reasoning"`
 }
 
@@ -43,7 +43,7 @@ type finalizerYaResponse struct {
 			Message struct {
 				Role string `json:"role"`
 				Text string `json:"text"`
-			} `json:"message"`
+			} `json:"MessageYandexGpt"`
 			Status string `json:"status"`
 		} `json:"alternatives"`
 		ModelVersion string `json:"modelVersion"`
@@ -167,20 +167,20 @@ func (f *FinalizerModel) Finalize(rawJson string) string {
 
 func (f *FinalizerModel) prepareFinalizerRequest(rawJson string) ([]byte, error) {
 	// Создаем системное сообщение с правилами
-	systemMsg := message{
+	systemMsg := MessageYandexGpt{
 		Role: "system",
 		Text: f.ruleText,
 	}
 
 	// Создаем пользовательское сообщение с final ответом
-	userMsg := message{
+	userMsg := MessageYandexGpt{
 		Role: "user",
 		Text: fmt.Sprintf("final_response: %s", rawJson),
 	}
 
 	r := finalizerRequest{
 		ModelURI: fmt.Sprintf("gpt://%s/%v", f.FolderID, f.modelVersion),
-		Messages: []message{systemMsg, userMsg},
+		Messages: []MessageYandexGpt{systemMsg, userMsg},
 	}
 
 	r.CompletionOptions.Stream = false

@@ -1,4 +1,4 @@
-package summary
+package prompt
 
 import (
 	"adventBot/internal/ai_model"
@@ -69,8 +69,8 @@ func NewSummarizer(
 		MaxOutputTokens:  maxOutput,
 		IamToken:         iamToken,
 		Model:            modelUri,
-		PromptRule:       ai_model.MustReadFile("./internal/ai_model/yandex/summary/system_summarizer_rule.txt"),
-		HistoryRule:      ai_model.MustReadFile("./internal/ai_model/yandex/summary/history_summarizer_rule.txt"),
+		PromptRule:       ai_model.MustReadFile("./internal/ai_model/yandex/summary/prompt/system_summarizer_rule.txt"),
+		HistoryRule:      ai_model.MustReadFile("./internal/ai_model/yandex/summary/prompt/history_summarizer_rule.txt"),
 		Tokenizer: Tokenizer{
 			IamToken: iamToken,
 			Model:    modelUri,
